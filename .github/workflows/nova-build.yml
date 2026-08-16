@@ -1,1 +1,141 @@
+name: NOVA Android Build
 
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build NOVA APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find NOVA ZIP
+        shell: bash
+        run: |
+          set -e
+
+          ZIP_FILE="NOVA_Sinhala_AI_COMPLETE_V3_ZIP_UPLOAD.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: $ZIP_FILE was not found."
+            echo ""
+            echo "Files in repository:"
+            find . -maxdepth 2 -type f -print
+            exit 1
+          fi
+
+          echo "Found: $ZIP_FILE"
+
+      - name: Validate ZIP
+        shell: bash
+        run: |
+          set -e
+
+          unzip -t "NOVA_Sinhala_AI_COMPLETE_V3_ZIP_UPLOAD.zip"
+
+      - name: Extract NOVA project
+        shell: bash
+        run: |
+          set -e
+
+          rm -rf nova-source
+          mkdir -p nova-source
+
+          unzip -q \
+            "NOVA_Sinhala_AI_COMPLETE_V3_ZIP_UPLOAD.zip" \
+            -d nova-source
+
+          echo "Extracted project:"
+          find nova-source -maxdepth 3 -type f | sort
+
+      - name: Locate Android project
+        shell: bash
+        run: |
+          set -e
+
+          if [ -d "nova-source/android" ]; then
+            echo "ANDROID_DIR=nova-source/android" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          ROOT="$(find nova-source \
+            -mindepth 1 \
+            -maxdepth 2 \
+            -type d \
+            -name android \
+            | head -n 1)"
+
+          if [ -z "$ROOT" ]; then
+            echo "ERROR: Android project was not found."
+            exit 1
+          fi
+
+          echo "ANDROID_DIR=$(dirname "$ROOT")/android" >> "$GITHUB_ENV"
+
+      - name: Check Android project
+        shell: bash
+        run: |
+          set -e
+
+          echo "Android directory:"
+          echo "$ANDROID_DIR"
+
+          test -d "$ANDROID_DIR"
+
+          if [ ! -f "$ANDROID_DIR/gradlew" ]; then
+            echo ""
+            echo "ERROR: gradlew is missing."
+            echo ""
+            echo "The NOVA Android project is not yet a complete Gradle"
+            echo "build project. We must complete the Android Gradle"
+            echo "project before an APK can be generated."
+            echo ""
+            find "$ANDROID_DIR" -maxdepth 3 -type f | sort
+            exit 1
+          fi
+
+          echo "Gradle wrapper found."
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Make Gradle executable
+        shell: bash
+        run: |
+          chmod +x "$ANDROID_DIR/gradlew"
+
+      - name: Build Debug APK
+        working-directory: ${{ env.ANDROID_DIR }}
+        shell: bash
+        run: |
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Find APK
+        shell: bash
+        run: |
+          set -e
+
+          echo "Generated APK files:"
+          find "$ANDROID_DIR/app/build/outputs" \
+            -type f \
+            -name "*.apk" \
+            -print
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-debug-APK
+          path: "**/app/build/outputs/apk/**/*.apk"
+          if-no-files-found: error
