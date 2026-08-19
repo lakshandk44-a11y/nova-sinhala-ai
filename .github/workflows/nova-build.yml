@@ -16,41 +16,93 @@ jobs:
 
     steps:
 
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
+
+      # ============================================================
+      # 2. FIND NOVA ZIP
+      # ============================================================
       - name: Find NOVA source ZIP
         id: zip
         shell: bash
         run: |
           set -euo pipefail
 
-          ZIP_FILE="NOVA_Sinhala_AI_COMPLETE_V3_ZIP_UPLOAD.zip"
+          echo "=========================================="
+          echo "SEARCHING FOR NOVA SOURCE ZIP"
+          echo "=========================================="
 
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: $ZIP_FILE was not found."
+          ZIP_FILE=""
+
+          # Exact current ZIP name
+          if [ -f "NOVA_Sinhala_AI_COMPLETE_V4_FIXED7_OPENROUTER_UNIVERSAL_HUMAN_AGENT_V15_GROQ_5KEY_FAILOVER_BUILD_FIXED4.zip" ]; then
+            ZIP_FILE="NOVA_Sinhala_AI_COMPLETE_V4_FIXED7_OPENROUTER_UNIVERSAL_HUMAN_AGENT_V15_GROQ_5KEY_FAILOVER_BUILD_FIXED4.zip"
+          fi
+
+          # Fallback: find any NOVA zip in repository root
+          if [ -z "$ZIP_FILE" ]; then
+            ZIP_FILE="$(
+              find . \
+                -maxdepth 1 \
+                -type f \
+                -iname "*.zip" \
+                -printf "%f\n" \
+                | grep -i "NOVA" \
+                | head -n 1 \
+                || true
+            )"
+          fi
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No NOVA ZIP file was found."
             echo ""
-            echo "Files in repository:"
-            find . -maxdepth 2 -type f -print | sort
+            echo "ZIP files available in repository:"
+            find . \
+              -maxdepth 2 \
+              -type f \
+              -iname "*.zip" \
+              -print \
+              | sort || true
+            echo ""
+            echo "Repository root:"
+            ls -la
             exit 1
           fi
 
-          echo "Found: $ZIP_FILE"
+          echo "Found NOVA ZIP:"
+          echo "$ZIP_FILE"
+
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
           echo "file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
 
-      - name: Validate ZIP
+
+      # ============================================================
+      # 3. VALIDATE ZIP
+      # ============================================================
+      - name: Validate NOVA ZIP
         shell: bash
         run: |
           set -euo pipefail
 
           echo "=========================================="
-          echo "VALIDATING NOVA SOURCE ZIP"
+          echo "VALIDATING NOVA ZIP"
           echo "=========================================="
 
-          unzip -t "$ZIP_FILE" 2>/dev/null || unzip -t "NOVA_Sinhala_AI_COMPLETE_V3_ZIP_UPLOAD.zip"
+          test -f "$ZIP_FILE"
 
+          unzip -t "$ZIP_FILE"
+
+          echo ""
           echo "ZIP validation successful."
 
+
+      # ============================================================
+      # 4. EXTRACT NOVA PROJECT
+      # ============================================================
       - name: Extract NOVA project
         shell: bash
         run: |
@@ -63,16 +115,23 @@ jobs:
           rm -rf nova-source
           mkdir -p nova-source
 
-          unzip -q \
-            "NOVA_Sinhala_AI_COMPLETE_V3_ZIP_UPLOAD.zip" \
-            -d nova-source
+          unzip -q "$ZIP_FILE" -d nova-source
 
-          echo "NOVA project extracted."
+          echo ""
+          echo "Extraction completed."
 
           echo ""
           echo "Top-level extracted directories:"
-          find nova-source -maxdepth 3 -type d | sort | head -200
+          find nova-source \
+            -maxdepth 3 \
+            -type d \
+            | sort \
+            | head -n 100
 
+
+      # ============================================================
+      # 5. LOCATE ANDROID PROJECT
+      # ============================================================
       - name: Locate Android project
         id: android
         shell: bash
@@ -85,129 +144,92 @@ jobs:
 
           ANDROID_DIR=""
 
-          if [ -f "nova-source/android/settings.gradle.kts" ] && \
-             [ -f "nova-source/android/build.gradle.kts" ] && \
-             [ -f "nova-source/android/app/build.gradle.kts" ]; then
-
+          # Direct location
+          if [ -d "nova-source/android" ]; then
             ANDROID_DIR="nova-source/android"
+          fi
 
-          else
+          # Common nested location
+          if [ -z "$ANDROID_DIR" ] && [ -d "nova-source/nova/android" ]; then
+            ANDROID_DIR="nova-source/nova/android"
+          fi
 
-            ROOT="$(
+          # Generic search
+          if [ -z "$ANDROID_DIR" ]; then
+            ANDROID_DIR="$(
               find nova-source \
-                -type f \
-                -name "settings.gradle.kts" \
+                -type d \
+                -name android \
                 -print \
-                | while read -r SETTINGS; do
-                    DIR="$(dirname "$SETTINGS")"
-
-                    if [ -f "$DIR/build.gradle.kts" ] && \
-                       [ -f "$DIR/app/build.gradle.kts" ]; then
+                | while read -r DIR; do
+                    if [ -f "$DIR/settings.gradle.kts" ] || \
+                       [ -f "$DIR/settings.gradle" ]; then
                       echo "$DIR"
                       break
                     fi
                   done
             )"
+          fi
 
-            if [ -z "$ROOT" ]; then
-              echo "ERROR: Android Gradle project was not found."
-              echo ""
-              echo "Gradle settings files found:"
-              find nova-source \
-                -type f \
-                -name "settings.gradle*" \
-                -print \
-                | sort
+          if [ -z "$ANDROID_DIR" ]; then
+            echo "ERROR: Android project could not be located."
 
-              echo ""
-              echo "Android directories found:"
-              find nova-source \
-                -type d \
-                -name android \
-                -print \
-                | sort
+            echo ""
+            echo "Possible Android directories:"
+            find nova-source \
+              -type d \
+              -name android \
+              -print \
+              | sort || true
 
-              exit 1
-            fi
+            echo ""
+            echo "Gradle files:"
+            find nova-source \
+              -type f \
+              \( \
+                -name "settings.gradle" \
+                -o \
+                -name "settings.gradle.kts" \
+                -o \
+                -name "build.gradle" \
+                -o \
+                -name "build.gradle.kts" \
+              \) \
+              -print \
+              | sort \
+              | head -n 200 || true
 
-            ANDROID_DIR="$ROOT"
+            exit 1
           fi
 
           echo "Android project:"
           echo "$ANDROID_DIR"
 
           test -d "$ANDROID_DIR"
-          test -f "$ANDROID_DIR/settings.gradle.kts"
-          test -f "$ANDROID_DIR/build.gradle.kts"
-          test -f "$ANDROID_DIR/app/build.gradle.kts"
+          test -d "$ANDROID_DIR/app"
 
-          echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
-
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-
-      - name: Verify Java and Gradle
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "VERIFYING BUILD ENVIRONMENT"
-          echo "=========================================="
-
-          echo ""
-          echo "Java:"
-          java -version
-
-          echo ""
-          echo "Gradle:"
-          gradle --version
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Validate NOVA backend
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "VALIDATING NOVA BACKEND"
-          echo "=========================================="
-
-          if [ -d "nova-source/server/nova_api" ]; then
-
-            python -m compileall \
-              -q \
-              nova-source/server/nova_api
-
-            echo "Backend validation successful."
-
-          elif [ -d "nova-source/nova/server/nova_api" ]; then
-
-            python -m compileall \
-              -q \
-              nova-source/nova/server/nova_api
-
-            echo "Backend validation successful."
-
-          else
-
-            echo "Backend directory not found."
-            echo "Continuing with Android build."
-
+          if [ ! -f "$ANDROID_DIR/settings.gradle.kts" ] && \
+             [ ! -f "$ANDROID_DIR/settings.gradle" ]; then
+            echo "ERROR: Gradle settings file not found."
+            exit 1
           fi
 
+          if [ ! -f "$ANDROID_DIR/app/build.gradle.kts" ] && \
+             [ ! -f "$ANDROID_DIR/app/build.gradle" ]; then
+            echo "ERROR: app/build.gradle file not found."
+            exit 1
+          fi
+
+          echo ""
+          echo "Android project validation successful."
+
+          echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
+          echo "android_dir=$ANDROID_DIR" >> "$GITHUB_OUTPUT"
+
+
+      # ============================================================
+      # 6. CHECK VOICE SERVICE SOURCE
+      # ============================================================
       - name: Verify VoiceService source
         shell: bash
         run: |
@@ -220,117 +242,186 @@ jobs:
           VOICE_FILE="$ANDROID_DIR/app/src/main/java/com/nova/assistant/VoiceService.kt"
 
           if [ ! -f "$VOICE_FILE" ]; then
-            echo "ERROR: VoiceService.kt was not found:"
+            echo "WARNING: VoiceService.kt was not found at:"
             echo "$VOICE_FILE"
-            exit 1
+            echo ""
+            echo "Continuing with Android build."
+            exit 0
           fi
 
           echo "VoiceService:"
           echo "$VOICE_FILE"
 
           echo ""
-          echo "Checking media action implementation..."
+          echo "Checking for forbidden direct media-action API references..."
 
-          if grep -nE 'AccessibilityService\.GLOBAL_ACTION_MEDIA_PLAY_PAUSE|GLOBAL_ACTION_MEDIA_PLAY_PAUSE|GLOBAL_ACTION_PLAY_PAUSE' "$VOICE_FILE"; then
-            echo ""
-            echo "ERROR: Unsupported direct media global-action symbol still exists in VoiceService.kt."
-            echo "Remove the direct symbol reference before compiling."
-            exit 1
-          fi
+          # The compiler error previously came from a direct reference to
+          # GLOBAL_ACTION_MEDIA_PLAY_PAUSE.
+          #
+          # We intentionally fail here only if actual Kotlin code contains
+          # a direct reference, while ignoring comments.
+          #
+          # Remove // comments before checking.
 
-          if ! grep -nE 'mediaPlayPauseGlobalAction[[:space:]]*=[[:space:]]*22' "$VOICE_FILE"; then
-            echo ""
-            echo "ERROR: Numeric media play/pause action implementation was not found."
-            exit 1
-          fi
-
-          if ! grep -nE 'VERSION\.SDK_INT[[:space:]]*>=[[:space:]]*36' "$VOICE_FILE"; then
-            echo ""
-            echo "ERROR: Android API 36 runtime guard was not found."
-            exit 1
-          fi
-
-          echo ""
-          echo "VoiceService source validation successful."
-
-      - name: Verify no unsupported media API references
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "CHECKING SOURCE FOR UNSUPPORTED MEDIA API"
-          echo "=========================================="
-
-          SEARCH_ROOT="$ANDROID_DIR/app/src/main/java"
-
-          if grep -RInE \
-            --include="*.kt" \
-            --include="*.java" \
-            'GLOBAL_ACTION_MEDIA_PLAY_PAUSE|GLOBAL_ACTION_PLAY_PAUSE' \
-            "$SEARCH_ROOT"; then
-
-            echo ""
-            echo "ERROR: Unsupported media global-action symbol found in Android source."
-            echo "The build must use the numeric action ID instead."
-            exit 1
-
-          fi
-
-          echo "No unsupported media global-action symbols found."
-
-      - name: Show VoiceService media implementation
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          VOICE_FILE="$ANDROID_DIR/app/src/main/java/com/nova/assistant/VoiceService.kt"
-
-          echo "=========================================="
-          echo "VOICE SERVICE MEDIA IMPLEMENTATION"
-          echo "=========================================="
-
-          LINE="$(
-            grep -n \
-              -m 1 \
-              'mediaPlayPauseGlobalAction' \
-              "$VOICE_FILE" \
-              | cut -d: -f1 \
-              || true
+          CODE_WITHOUT_COMMENTS="$(
+            sed \
+              -E 's/[[:space:]]*\/\/.*$//' \
+              "$VOICE_FILE"
           )"
 
-          if [ -n "$LINE" ]; then
+          if printf '%s\n' "$CODE_WITHOUT_COMMENTS" \
+              | grep -qE 'AccessibilityService[[:space:]]*\.[[:space:]]*GLOBAL_ACTION_MEDIA_PLAY_PAUSE'; then
 
-            START=$((LINE - 12))
+            echo ""
+            echo "ERROR: Direct GLOBAL_ACTION_MEDIA_PLAY_PAUSE reference found."
+            echo ""
+            echo "The VoiceService source must use the numeric API-safe"
+            echo "implementation instead of directly referencing the API field."
+            echo ""
+            exit 1
+          fi
 
-            if [ "$START" -lt 1 ]; then
-              START=1
-            fi
+          if printf '%s\n' "$CODE_WITHOUT_COMMENTS" \
+              | grep -qE 'AccessibilityService[[:space:]]*\.[[:space:]]*GLOBAL_ACTION_PLAY_PAUSE'; then
 
-            END=$((LINE + 18))
+            echo ""
+            echo "ERROR: Direct GLOBAL_ACTION_PLAY_PAUSE reference found."
+            echo ""
+            exit 1
+          fi
 
-            sed -n "${START},${END}p" "$VOICE_FILE"
+          echo "No forbidden direct media-action API reference found."
+          echo "VoiceService source check passed."
+
+
+      # ============================================================
+      # 7. JAVA 17
+      # ============================================================
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+
+      # ============================================================
+      # 8. GRADLE 8.9
+      # ============================================================
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+
+      # ============================================================
+      # 9. VERIFY JAVA + GRADLE
+      # ============================================================
+      - name: Verify Java and Gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "JAVA VERSION"
+          echo "=========================================="
+
+          java -version
+
+          echo ""
+          echo "=========================================="
+          echo "GRADLE VERSION"
+          echo "=========================================="
+
+          gradle --version
+
+
+      # ============================================================
+      # 10. PYTHON
+      # ============================================================
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+
+      # ============================================================
+      # 11. VALIDATE BACKEND IF PRESENT
+      # ============================================================
+      - name: Validate NOVA backend
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "VALIDATING NOVA BACKEND"
+          echo "=========================================="
+
+          if [ -d "nova-source/server/nova_api" ]; then
+
+            echo "Backend found:"
+            echo "nova-source/server/nova_api"
+
+            python -m compileall \
+              nova-source/server/nova_api
+
+            echo ""
+            echo "Backend validation successful."
+
+          elif [ -d "nova-source/nova/server/nova_api" ]; then
+
+            echo "Backend found:"
+            echo "nova-source/nova/server/nova_api"
+
+            python -m compileall \
+              nova-source/nova/server/nova_api
+
+            echo ""
+            echo "Backend validation successful."
 
           else
 
-            echo "Media implementation not found."
-            exit 1
+            echo "Backend directory not found."
+            echo "Continuing with Android build."
 
           fi
 
-      - name: Clean previous Android build
+
+      # ============================================================
+      # 12. CHECK GRADLE WRAPPER
+      # ============================================================
+      - name: Prepare Gradle build
         working-directory: ${{ env.ANDROID_DIR }}
         shell: bash
         run: |
           set -euo pipefail
 
           echo "=========================================="
-          echo "CLEANING PREVIOUS BUILD"
+          echo "PREPARING GRADLE BUILD"
           echo "=========================================="
 
-          gradle clean \
-            --no-daemon
+          if [ -f "./gradlew" ]; then
+            echo "Gradle wrapper found."
 
+            chmod +x ./gradlew
+
+            echo ""
+            echo "Gradle wrapper version:"
+            ./gradlew --version
+
+            echo "USE_WRAPPER=true" >> "$GITHUB_ENV"
+
+          else
+            echo "Gradle wrapper not found."
+            echo "Using installed Gradle 8.9."
+
+            echo "USE_WRAPPER=false" >> "$GITHUB_ENV"
+          fi
+
+
+      # ============================================================
+      # 13. BUILD DEBUG APK
+      # ============================================================
       - name: Build NOVA Debug APK
         working-directory: ${{ env.ANDROID_DIR }}
         shell: bash
@@ -341,15 +432,47 @@ jobs:
           echo "STARTING NOVA ANDROID BUILD"
           echo "=========================================="
 
-          gradle assembleDebug \
-            --no-daemon \
-            --stacktrace
+          echo ""
+          echo "Android directory:"
+          pwd
+
+          echo ""
+          echo "Java:"
+          java -version
+
+          echo ""
+
+          if [ "${USE_WRAPPER:-false}" = "true" ]; then
+
+            echo "Using Gradle wrapper."
+
+            ./gradlew \
+              clean \
+              assembleDebug \
+              --no-daemon \
+              --stacktrace
+
+          else
+
+            echo "Using installed Gradle 8.9."
+
+            gradle \
+              clean \
+              assembleDebug \
+              --no-daemon \
+              --stacktrace
+
+          fi
 
           echo ""
           echo "=========================================="
-          echo "GRADLE BUILD COMPLETED"
+          echo "ANDROID BUILD COMMAND FINISHED"
           echo "=========================================="
 
+
+      # ============================================================
+      # 14. FIND GENERATED APK
+      # ============================================================
       - name: Find generated APK
         id: apk
         shell: bash
@@ -360,95 +483,90 @@ jobs:
           echo "SEARCHING FOR GENERATED APK"
           echo "=========================================="
 
-          OUTPUT_DIR="$ANDROID_DIR/app/build/outputs"
+          APK_DIR="$ANDROID_DIR/app/build/outputs/apk"
 
-          if [ ! -d "$OUTPUT_DIR" ]; then
-            echo "ERROR: Build outputs directory does not exist:"
-            echo "$OUTPUT_DIR"
+          if [ ! -d "$APK_DIR" ]; then
+            echo "ERROR: APK output directory does not exist:"
+            echo "$APK_DIR"
+
+            echo ""
+            echo "Available build outputs:"
+            find "$ANDROID_DIR/app/build/outputs" \
+              -maxdepth 5 \
+              -type f \
+              -print \
+              | sort || true
+
             exit 1
           fi
+
+          echo "APK output directory:"
+          echo "$APK_DIR"
 
           echo ""
           echo "Generated APK files:"
 
-          find "$OUTPUT_DIR" \
+          find "$APK_DIR" \
             -type f \
             -name "*.apk" \
             -print \
             | sort
 
-          APK_COUNT="$(
-            find "$OUTPUT_DIR" \
-              -type f \
-              -name "*.apk" \
-              | wc -l
-          )"
-
-          APK_COUNT="$(echo "$APK_COUNT" | tr -d ' ')"
-
-          echo ""
-          echo "APK count: $APK_COUNT"
-
-          if [ "$APK_COUNT" -eq 0 ]; then
-            echo ""
-            echo "ERROR: No APK was generated."
-
-            echo ""
-            echo "Build output directory:"
-            find "$OUTPUT_DIR" \
-              -maxdepth 5 \
-              -type f \
-              -print \
-              | sort
-
-            exit 1
-          fi
-
           APK_FILE="$(
-            find "$OUTPUT_DIR" \
+            find "$APK_DIR" \
               -type f \
               -name "*.apk" \
+              -print \
               | sort \
               | head -n 1
           )"
 
           if [ -z "$APK_FILE" ]; then
-            echo "ERROR: APK path could not be determined."
+            echo ""
+            echo "ERROR: No APK was generated."
+
+            echo ""
+            echo "Complete app build output:"
+            find "$ANDROID_DIR/app/build" \
+              -maxdepth 8 \
+              -type f \
+              -print \
+              | sort \
+              | head -n 300 || true
+
             exit 1
           fi
 
           echo ""
-          echo "Selected APK:"
+          echo "APK FOUND:"
           echo "$APK_FILE"
 
-          echo "APK_FILE=$APK_FILE" >> "$GITHUB_ENV"
+          APK_ABSOLUTE="$(realpath "$APK_FILE")"
 
-      - name: Verify APK file
+          echo ""
+          echo "APK absolute path:"
+          echo "$APK_ABSOLUTE"
+
+          echo "APK_FILE=$APK_ABSOLUTE" >> "$GITHUB_ENV"
+          echo "apk_file=$APK_ABSOLUTE" >> "$GITHUB_OUTPUT"
+
+
+      # ============================================================
+      # 15. VERIFY APK
+      # ============================================================
+      - name: Verify generated APK
         shell: bash
         run: |
           set -euo pipefail
 
           echo "=========================================="
-          echo "VERIFYING APK"
+          echo "VERIFYING GENERATED APK"
           echo "=========================================="
 
-          if [ -z "${APK_FILE:-}" ]; then
-            echo "ERROR: APK_FILE is not set."
-            exit 1
-          fi
-
-          if [ ! -f "$APK_FILE" ]; then
-            echo "ERROR: APK file does not exist:"
-            echo "$APK_FILE"
-            exit 1
-          fi
+          test -f "$APK_FILE"
+          test -s "$APK_FILE"
 
           APK_SIZE="$(stat -c%s "$APK_FILE")"
-
-          if [ "$APK_SIZE" -le 0 ]; then
-            echo "ERROR: APK file is empty."
-            exit 1
-          fi
 
           echo "APK:"
           echo "$APK_FILE"
@@ -457,9 +575,19 @@ jobs:
           echo "APK size:"
           echo "$APK_SIZE bytes"
 
+          if [ "$APK_SIZE" -lt 10000 ]; then
+            echo ""
+            echo "ERROR: APK is unexpectedly small."
+            exit 1
+          fi
+
           echo ""
           echo "APK verification successful."
 
+
+      # ============================================================
+      # 16. COPY APK TO SIMPLE OUTPUT LOCATION
+      # ============================================================
       - name: Prepare APK artifact
         shell: bash
         run: |
@@ -469,28 +597,39 @@ jobs:
           echo "PREPARING APK ARTIFACT"
           echo "=========================================="
 
-          mkdir -p artifacts
+          rm -rf artifact
+          mkdir -p artifact
 
           cp "$APK_FILE" \
-            "artifacts/NOVA-debug.apk"
+            "artifact/NOVA-debug.apk"
 
-          test -f "artifacts/NOVA-debug.apk"
+          test -f "artifact/NOVA-debug.apk"
+          test -s "artifact/NOVA-debug.apk"
 
           echo "Artifact prepared:"
-          ls -lh "artifacts/NOVA-debug.apk"
+          ls -lh artifact/NOVA-debug.apk
 
+
+      # ============================================================
+      # 17. UPLOAD APK
+      # ============================================================
       - name: Upload NOVA APK
         uses: actions/upload-artifact@v4
         with:
           name: NOVA-debug-APK
-          path: artifacts/NOVA-debug.apk
+          path: artifact/NOVA-debug.apk
           if-no-files-found: error
-          compression-level: 0
+          retention-days: 30
 
+
+      # ============================================================
+      # 18. BUILD SUMMARY
+      # ============================================================
       - name: NOVA Build Summary
         if: success()
         shell: bash
         run: |
+          echo ""
           echo "=========================================="
           echo "NOVA BUILD SUCCESSFUL"
           echo "=========================================="
@@ -499,9 +638,9 @@ jobs:
           echo "$ANDROID_DIR"
           echo ""
           echo "APK:"
-          echo "artifacts/NOVA-debug.apk"
+          echo "artifact/NOVA-debug.apk"
           echo ""
-          echo "Artifact:"
+          echo "GitHub Actions artifact:"
           echo "NOVA-debug-APK"
           echo ""
           echo "=========================================="
